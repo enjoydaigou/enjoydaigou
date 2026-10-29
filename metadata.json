@@ -1,0 +1,6 @@
+{
+  "name": "GlobalProxy - 代購營運後台",
+  "description": "專業跨國代購營運管理系統，整合營運總覽、開單報價、訂單管道追蹤、跨訂單採購彙總、二階段訂金尾款對帳核銷、客戶 CRM 與多國匯率運費設定。",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

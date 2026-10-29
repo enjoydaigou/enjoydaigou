@@ -1,0 +1,324 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ----------------------------------------------------
+    // 身分驗證與角色權限定義 (Zero-Trust RBAC Matrix)
+    // ----------------------------------------------------
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // 必須為 staff_users 集合中且 status == 'active' 的有效員工
+    function isStaff() {
+      return isAuthenticated() && 
+        exists(/databases/$(database)/documents/staff_users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/staff_users/$(request.auth.uid)).data.status == 'active';
+    }
+
+    function getStaffRole() {
+      return get(/databases/$(database)/documents/staff_users/$(request.auth.uid)).data.role;
+    }
+
+    // 1. 最高管理員 (Super Admin / Admin)：擁有全站管理權限
+    function isAdmin() {
+      return isStaff() && (
+        getStaffRole() == 'super_admin' || 
+        getStaffRole() == 'admin'
+      );
+    }
+
+    // 2. 採購買手 (Buyer / Purchaser)：負責海外商品採購與目錄成本管理
+    function isBuyer() {
+      return isStaff() && (
+        isAdmin() || 
+        getStaffRole() == 'purchaser' || 
+        getStaffRole() == 'buyer'
+      );
+    }
+
+    // 3. 財務會計 (Finance)：負責付款核銷、退款審核與收款帳戶設定
+    function isFinance() {
+      return isStaff() && (
+        isAdmin() || 
+        getStaffRole() == 'finance'
+      );
+    }
+
+    // 4. 小幫手/客服 (Assistant / Customer Service)：負責包裹出貨追蹤、顧客收件聯絡
+    function isAssistant() {
+      return isStaff() && (
+        isAdmin() || 
+        getStaffRole() == 'customer_service'
+      );
+    }
+
+    // 取得本次更新異動的欄位清單 (Field Level Whitelist Guard)
+    function affectedFields() {
+      return request.resource.data.diff(resource.data).affectedKeys();
+    }
+
+    // ----------------------------------------------------
+    // 1. 系統設定 (嚴格分權：公開賣場設定 vs 私密財務銀行設定)
+    // ----------------------------------------------------
+    // 公開設定：賣場名稱、標語、橫幅、匯率與每公斤空運費、台灣超取運費
+    match /system_settings/public_config {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // 私密財務設定：收款銀行帳號、戶名、內部核銷附註
+    // 僅限最高管理員與財務會計讀取，買手與客服小幫手嚴格禁止讀取！
+    match /system_settings/private_finance {
+      allow read: if isAdmin() || isFinance();
+      allow write: if isAdmin();
+    }
+
+    // 歷史過渡檔案：未登入者與無關人員嚴禁存取
+    match /system_settings/{settingId} {
+      allow read: if settingId == 'public_config' || isAdmin() || isFinance();
+      allow write: if isAdmin();
+    }
+
+    // ----------------------------------------------------
+    // 2. 商品目錄 (物理隔離：公開前台商品 vs 私密採購成本)
+    // ----------------------------------------------------
+    // 公開商品資料：品名、分類、售價、圖片、現貨/預購規格 (不含任何批發成本)
+    match /catalog/{productId} {
+      allow read: if isStaff() || resource.data.status == 'active' || resource.data.status == 'preorder';
+      allow create, update: if isBuyer();
+      allow delete: if isAdmin();
+
+      // 採購成本子集合：存放原幣成本 (originalPrice)、代購利潤抽成與採購備註
+      // 訪客、顧客、客服、財務一律拒絕存取，僅買手與管理員能讀寫！
+      match /procurement/{docId} {
+        allow read, write: if isBuyer();
+      }
+    }
+
+    // ----------------------------------------------------
+    // 3. 客戶目錄與個人檔案 (職能最小權限原則)
+    // ----------------------------------------------------
+    match /customers/{customerId} {
+      // 讀取：顧客只能讀取自己的個資；員工中僅管理員與客服小幫手可讀取（處理寄件與聯繫），買手與財務無業務需要不可閱覽客戶清單
+      allow read: if isAdmin() || isAssistant() || (isAuthenticated() && (customerId == request.auth.uid || resource.data.authUid == request.auth.uid));
+      
+      // 建立：
+      // (1) 顧客自行註冊：強制驗證身分與初始值，禁止自封 VIP 或偽造消費金額
+      // (2) 員工代建：僅限管理員或客服代客登記
+      allow create: if (
+        isAuthenticated() && 
+        (customerId == request.auth.uid || request.resource.data.authUid == request.auth.uid) &&
+        request.resource.data.tag == '新客' &&
+        request.resource.data.totalSpentTwd == 0 &&
+        request.resource.data.ordersCount == 0
+      ) || (
+        isAdmin() || isAssistant()
+      );
+
+      // 更新：
+      // (1) 管理員可更新
+      // (2) 客服小幫手僅可更新備註與地址電話，不得竄改消費累計數據
+      // (3) 顧客僅可更新個人聯絡資訊，不得變更 VIP 標籤與消費累計數據
+      allow update: if isAdmin() || (
+        isAssistant() &&
+        request.resource.data.totalSpentTwd == resource.data.totalSpentTwd &&
+        request.resource.data.ordersCount == resource.data.ordersCount
+      ) || (
+        isAuthenticated() && 
+        (customerId == request.auth.uid || resource.data.authUid == request.auth.uid) &&
+        request.resource.data.tag == resource.data.tag &&
+        request.resource.data.totalSpentTwd == resource.data.totalSpentTwd &&
+        request.resource.data.ordersCount == resource.data.ordersCount
+      );
+
+      allow delete: if isAdmin();
+    }
+
+    // ----------------------------------------------------
+    // 4. 訂單模組 (欄位級白名單 Whitelist & 防篡改防越權)
+    // ----------------------------------------------------
+    match /orders/{orderId} {
+      // 讀取：顧客只能讀取自己的訂單；員工依工作權限讀取
+      allow read: if isStaff() || (isAuthenticated() && resource.data.customerId == request.auth.uid);
+
+      // 建立訂單：嚴格分流，取消寬鬆 isStaff() 繞過
+      // (1) 顧客下單：強制初始財務狀態為未付、0 元
+      // (2) 客服或管理員代客建單：必須保持初始財務狀態為未付
+      allow create: if (
+        isAuthenticated() &&
+        request.resource.data.customerId == request.auth.uid &&
+        request.resource.data.status == 'pending_deposit' &&
+        request.resource.data.depositPaymentStatus == 'unpaid' &&
+        request.resource.data.depositPaidTwd == 0 &&
+        request.resource.data.balancePaymentStatus == 'unpaid' &&
+        request.resource.data.balancePaidTwd == 0 &&
+        request.resource.data.totalRevenueTwd == 0
+      ) || (
+        isAdmin()
+      ) || (
+        isAssistant() &&
+        request.resource.data.depositPaymentStatus == 'unpaid' &&
+        request.resource.data.depositPaidTwd == 0 &&
+        request.resource.data.balancePaymentStatus == 'unpaid' &&
+        request.resource.data.balancePaidTwd == 0
+      );
+
+      // 更新訂單：嚴格採用欄位白名單 (affectedFields().hasOnly) 與防護機制
+      allow update: if (
+        // (1) 管理員：完全修改權限
+        isAdmin()
+      ) || (
+        // (2) 財務會計：專責款項核銷與退款，嚴禁修改商品明細、成本、訂單金額或配送地址
+        isFinance() &&
+        affectedFields().hasOnly([
+          'depositPaymentStatus',
+          'depositPaidTwd',
+          'balancePaymentStatus',
+          'balancePaidTwd',
+          'totalRevenueTwd',
+          'refundStatus',
+          'refundAmountTwd',
+          'refundTransferRef',
+          'refundCompletedAt',
+          'status',
+          'updatedAt'
+        ]) &&
+        request.resource.data.items == resource.data.items &&
+        request.resource.data.itemsTotalTwd == resource.data.itemsTotalTwd &&
+        request.resource.data.depositRequiredTwd == resource.data.depositRequiredTwd &&
+        request.resource.data.balanceRequiredTwd == resource.data.balanceRequiredTwd &&
+        request.resource.data.customerId == resource.data.customerId &&
+        request.resource.data.orderNo == resource.data.orderNo
+      ) || (
+        // (3) 採購買手：專責海外採購註記與海外物流，嚴禁修改款項核銷、金額或退款核准
+        isBuyer() &&
+        affectedFields().hasOnly([
+          'items',
+          'status',
+          'overseasTrackingNo',
+          'isOutOfStock',
+          'outOfStockReason',
+          'outOfStockNotifiedAt',
+          'adminNotes',
+          'updatedAt'
+        ]) &&
+        request.resource.data.depositPaymentStatus == resource.data.depositPaymentStatus &&
+        request.resource.data.depositPaidTwd == resource.data.depositPaidTwd &&
+        request.resource.data.balancePaymentStatus == resource.data.balancePaymentStatus &&
+        request.resource.data.balancePaidTwd == resource.data.balancePaidTwd &&
+        request.resource.data.totalRevenueTwd == resource.data.totalRevenueTwd &&
+        request.resource.data.itemsTotalTwd == resource.data.itemsTotalTwd &&
+        request.resource.data.depositRequiredTwd == resource.data.depositRequiredTwd &&
+        request.resource.data.balanceRequiredTwd == resource.data.balanceRequiredTwd &&
+        request.resource.data.refundStatus == resource.data.refundStatus &&
+        request.resource.data.refundAmountTwd == resource.data.refundAmountTwd &&
+        request.resource.data.customerId == resource.data.customerId &&
+        request.resource.data.orderNo == resource.data.orderNo
+      ) || (
+        // (4) 客服小幫手：專責出貨物流追蹤與備註，嚴格白名單，絕不夾帶修改金額或財務
+        isAssistant() &&
+        affectedFields().hasOnly([
+          'overseasTrackingNo',
+          'domesticTrackingNo',
+          'deliveryMethod',
+          'mergedShipmentNo',
+          'mergedWithOrderIds',
+          'mergedWithOrderNos',
+          'isMergedSubOrder',
+          'customerNotes',
+          'adminNotes',
+          'status',
+          'updatedAt'
+        ]) &&
+        request.resource.data.items == resource.data.items &&
+        request.resource.data.itemsTotalTwd == resource.data.itemsTotalTwd &&
+        request.resource.data.depositRequiredTwd == resource.data.depositRequiredTwd &&
+        request.resource.data.depositPaidTwd == resource.data.depositPaidTwd &&
+        request.resource.data.depositPaymentStatus == resource.data.depositPaymentStatus &&
+        request.resource.data.balanceRequiredTwd == resource.data.balanceRequiredTwd &&
+        request.resource.data.balancePaidTwd == resource.data.balancePaidTwd &&
+        request.resource.data.balancePaymentStatus == resource.data.balancePaymentStatus &&
+        request.resource.data.totalRevenueTwd == resource.data.totalRevenueTwd &&
+        request.resource.data.refundStatus == resource.data.refundStatus &&
+        request.resource.data.refundAmountTwd == resource.data.refundAmountTwd &&
+        request.resource.data.customerId == resource.data.customerId &&
+        request.resource.data.orderNo == resource.data.orderNo
+      ) || (
+        // (5) 顧客本人：僅能更新個人訂單備註或填報退款帳號，嚴禁變更任何商品金額或物流狀態
+        isAuthenticated() &&
+        resource.data.customerId == request.auth.uid &&
+        affectedFields().hasOnly([
+          'customerNotes',
+          'refundBankInfo',
+          'updatedAt'
+        ]) &&
+        request.resource.data.customerId == resource.data.customerId
+      );
+
+      allow delete: if isAdmin();
+    }
+
+    // ----------------------------------------------------
+    // 5. 付款核銷回報 (僅財務與管理員可查閱與核銷)
+    // ----------------------------------------------------
+    match /payments/{paymentId} {
+      // 讀取：顧客僅看自己的付款；內部僅財務與管理員可看（買手與客服嚴格禁止看匯款紀錄）
+      allow read: if isAdmin() || isFinance() || (isAuthenticated() && resource.data.customerId == request.auth.uid);
+
+      // 建立：
+      // (1) 顧客回報付款：必須為自己本人的訂單，且狀態強制為 pending
+      // (2) 財務或管理員手工記錄
+      allow create: if (
+        isAuthenticated() &&
+        request.resource.data.customerId == request.auth.uid &&
+        request.resource.data.status == 'pending' &&
+        exists(/databases/$(database)/documents/orders/$(request.resource.data.orderId)) &&
+        get(/databases/$(database)/documents/orders/$(request.resource.data.orderId)).data.customerId == request.auth.uid
+      ) || (
+        isAdmin() || isFinance()
+      );
+
+      // 審核更新：只有財務與管理員可核銷或駁回（客服小幫手與買手嚴禁修改）
+      allow update: if isFinance();
+      allow delete: if isAdmin();
+    }
+
+    // ----------------------------------------------------
+    // 6. 圖片許願詢價區 (顧客提問 vs 買手/客服處理)
+    // ----------------------------------------------------
+    match /wishes/{wishId} {
+      // 讀取：顧客看自己的許願；管理員、買手、客服可讀取處理（財務無業務需求禁止讀取）
+      allow read: if isAdmin() || isBuyer() || isAssistant() || (isAuthenticated() && resource.data.customerId == request.auth.uid);
+
+      // 建立：顧客本人提交或客服代建
+      allow create: if (
+        isAuthenticated() &&
+        request.resource.data.customerId == request.auth.uid &&
+        request.resource.data.status == 'pending'
+      ) || (
+        isAdmin() || isAssistant()
+      );
+
+      // 更新：買手或管理員可提供正式報價；顧客僅能修改備註與補充圖片
+      allow update: if isBuyer() || (
+        isAuthenticated() &&
+        resource.data.customerId == request.auth.uid &&
+        affectedFields().hasOnly(['specNote', 'budgetTwd', 'referenceUrl', 'images', 'imageUrl', 'updatedAt']) &&
+        request.resource.data.status == resource.data.status &&
+        request.resource.data.quotedPriceTwd == resource.data.quotedPriceTwd
+      );
+
+      allow delete: if isAdmin();
+    }
+
+    // ----------------------------------------------------
+    // 7. 內部工作人員清單 (防特權提升 Privilege Escalation)
+    // ----------------------------------------------------
+    match /staff_users/{userId} {
+      allow read: if isStaff();
+      // 僅最高管理員能新增、變更角色或刪除員工帳號（一般員工無法自我提權）
+      allow create, update, delete: if isAdmin();
+    }
+  }
+}

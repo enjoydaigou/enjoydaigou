@@ -1,0 +1,228 @@
+{
+  "entities": {
+    "SystemSettings": {
+      "title": "SystemSettings",
+      "description": "Storefront branding, exchange rates, domestic shipping policy, and custom registration fields.",
+      "type": "object",
+      "properties": {
+        "shopName": { "type": "string" },
+        "shopSubtitle": { "type": "string" },
+        "customRegFieldLabel": { "type": "string" },
+        "isCustomRegFieldRequired": { "type": "boolean" },
+        "customRegFieldPlaceholder": { "type": "string" },
+        "enableWishlistArea": { "type": "boolean" },
+        "wishlistNotice": { "type": "string" },
+        "heroBadgeText": { "type": "string" },
+        "heroTitle": { "type": "string" },
+        "heroDescription": { "type": "string" },
+        "heroFeature1": { "type": "string" },
+        "heroFeature2": { "type": "string" },
+        "heroFeature3": { "type": "string" },
+        "depositPaymentPolicy": { "type": "string" },
+        "customDepositRatio": { "type": "number" },
+        "depositPolicyNote": { "type": "string" },
+        "deliveryNotice": { "type": "string" },
+        "customCountries": { "type": "array" },
+        "exchangeRates": { "type": "object" },
+        "receivingBank": { "type": "object" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["shopName", "receivingBank", "exchangeRates"]
+    },
+    "CatalogProduct": {
+      "title": "CatalogProduct",
+      "description": "Products available for proxy purchasing with variant sub-items.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "sku": { "type": "string" },
+        "category": { "type": "string" },
+        "country": { "type": "string" },
+        "sourceStore": { "type": "string" },
+        "sourceUrl": { "type": "string" },
+        "imageUrl": { "type": "string" },
+        "images": { "type": "array" },
+        "status": { "type": "string" },
+        "saleMode": { "type": "string" },
+        "preorderNotice": { "type": "string" },
+        "description": { "type": "string" },
+        "subItems": { "type": "array" },
+        "isSecondStageFreight": { "type": "boolean" },
+        "suggestedPriceTwd": { "type": "number" },
+        "originalPrice": { "type": "number" },
+        "stockQty": { "type": "number" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "name", "country", "status", "subItems"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "Customer proxy purchasing order with full lifecycle tracking.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "orderNo": { "type": "string" },
+        "customerId": { "type": "string" },
+        "customerName": { "type": "string" },
+        "customerPhone": { "type": "string" },
+        "customerLine": { "type": "string" },
+        "customerIg": { "type": "string" },
+        "communityName": { "type": "string" },
+        "deliveryMethod": { "type": "string" },
+        "deliveryStore": { "type": "string" },
+        "deliveryAddress": { "type": "string" },
+        "domesticTrackingNo": { "type": "string" },
+        "country": { "type": "string" },
+        "items": { "type": "array" },
+        "itemsTotalTwd": { "type": "number" },
+        "domesticShippingTwd": { "type": "number" },
+        "internationalShippingTwd": { "type": "number" },
+        "totalAmountTwd": { "type": "number" },
+        "depositRequiredTwd": { "type": "number" },
+        "depositPaidTwd": { "type": "number" },
+        "balanceRequiredTwd": { "type": "number" },
+        "balancePaidTwd": { "type": "number" },
+        "depositPaymentStatus": { "type": "string" },
+        "balancePaymentStatus": { "type": "string" },
+        "status": { "type": "string" },
+        "paymentLast5": { "type": "string" },
+        "balancePaymentLast5": { "type": "string" },
+        "mergedShipmentNo": { "type": "string" },
+        "mergedWithOrderNos": { "type": "array" },
+        "notes": { "type": "string" },
+        "outOfStockReason": { "type": "string" },
+        "isOutOfStock": { "type": "boolean" },
+        "refundStatus": { "type": "string" },
+        "refundAmountTwd": { "type": "number" },
+        "refundBankInfo": { "type": "object" },
+        "refundTransferRef": { "type": "string" },
+        "refundedAt": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "orderNo", "customerName", "customerPhone", "items", "totalAmountTwd", "depositRequiredTwd", "status", "createdAt"]
+    },
+    "PaymentRecord": {
+      "title": "PaymentRecord",
+      "description": "Customer bank transfer verification records.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "orderId": { "type": "string" },
+        "orderNo": { "type": "string" },
+        "customerId": { "type": "string" },
+        "customerName": { "type": "string" },
+        "customerPhone": { "type": "string" },
+        "stage": { "type": "string" },
+        "amountTwd": { "type": "number" },
+        "reportedBankCode": { "type": "string" },
+        "reportedBankName": { "type": "string" },
+        "reportedLast5": { "type": "string" },
+        "status": { "type": "string" },
+        "proofNote": { "type": "string" },
+        "verifiedAt": { "type": "string" },
+        "verifier": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "orderId", "orderNo", "stage", "amountTwd", "reportedLast5", "status", "createdAt"]
+    },
+    "Customer": {
+      "title": "Customer",
+      "description": "Customer profile without raw plaintext passwords.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "authUid": { "type": "string" },
+        "customerCode": { "type": "string" },
+        "name": { "type": "string" },
+        "phone": { "type": "string" },
+        "email": { "type": "string" },
+        "lineId": { "type": "string" },
+        "igHandle": { "type": "string" },
+        "communityName": { "type": "string" },
+        "delivery": { "type": "object" },
+        "tag": { "type": "string" },
+        "notes": { "type": "string" },
+        "totalSpentTwd": { "type": "number" },
+        "ordersCount": { "type": "number" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "name", "phone", "createdAt"]
+    },
+    "WishRequest": {
+      "title": "WishRequest",
+      "description": "Customer wishlist photo quote requests.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "wishNo": { "type": "string" },
+        "customerId": { "type": "string" },
+        "customerName": { "type": "string" },
+        "customerPhone": { "type": "string" },
+        "communityName": { "type": "string" },
+        "productName": { "type": "string" },
+        "country": { "type": "string" },
+        "referenceUrl": { "type": "string" },
+        "imageUrl": { "type": "string" },
+        "specNote": { "type": "string" },
+        "budgetTwd": { "type": "number" },
+        "adminNote": { "type": "string" },
+        "quotedPriceTwd": { "type": "number" },
+        "status": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "quotedAt": { "type": "string" }
+      },
+      "required": ["id", "wishNo", "customerName", "customerPhone", "productName", "country", "status", "createdAt"]
+    },
+    "StaffUser": {
+      "title": "StaffUser",
+      "description": "Staff account with assigned role and permissions.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "authUid": { "type": "string" },
+        "username": { "type": "string" },
+        "name": { "type": "string" },
+        "role": { "type": "string" },
+        "email": { "type": "string" },
+        "status": { "type": "string" },
+        "lastLoginAt": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "username", "name", "role", "status", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/system_settings/{settingId}": {
+      "schema": "SystemSettings",
+      "description": "Global settings and configuration document."
+    },
+    "/catalog/{productId}": {
+      "schema": "CatalogProduct",
+      "description": "Product catalog and variant sub-items."
+    },
+    "/orders/{orderId}": {
+      "schema": "Order",
+      "description": "Proxy orders with items and status tracking."
+    },
+    "/payments/{paymentId}": {
+      "schema": "PaymentRecord",
+      "description": "Payment reporting and reconciliation records."
+    },
+    "/customers/{customerId}": {
+      "schema": "Customer",
+      "description": "Customer directory records."
+    },
+    "/wishes/{wishId}": {
+      "schema": "WishRequest",
+      "description": "Wishlist and photo quote inquiries."
+    },
+    "/staff_users/{userId}": {
+      "schema": "StaffUser",
+      "description": "Staff user directory and role assignment."
+    }
+  }
+}
