@@ -9,11 +9,19 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    // 必須為 staff_users 集合中且 status == 'active' 的有效員工
+    // 系統最高管理員專屬 UID (主理人)
+    function isSuperAdmin() {
+      return isAuthenticated() && request.auth.uid == 'X7Cq5CSZTWQkTn9LtUj6U6YPUpi2';
+    }
+
+    // 必須為 staff_users 集合中且 status == 'active' 的有效員工，或最高管理員 UID
     function isStaff() {
-      return isAuthenticated() && 
-        exists(/databases/$(database)/documents/staff_users/$(request.auth.uid)) &&
-        get(/databases/$(database)/documents/staff_users/$(request.auth.uid)).data.status == 'active';
+      return isAuthenticated() && (
+        isSuperAdmin() || (
+          exists(/databases/$(database)/documents/staff_users/$(request.auth.uid)) &&
+          get(/databases/$(database)/documents/staff_users/$(request.auth.uid)).data.status == 'active'
+        )
+      );
     }
 
     function getStaffRole() {
@@ -22,34 +30,47 @@ service cloud.firestore {
 
     // 1. 最高管理員 (Super Admin / Admin)：擁有全站管理權限
     function isAdmin() {
-      return isStaff() && (
-        getStaffRole() == 'super_admin' || 
-        getStaffRole() == 'admin'
+      return isAuthenticated() && (
+        isSuperAdmin() || (
+          isStaff() && (
+            getStaffRole() == 'super_admin' || 
+            getStaffRole() == 'admin'
+          )
+        )
       );
     }
 
     // 2. 採購買手 (Buyer / Purchaser)：負責海外商品採購與目錄成本管理
     function isBuyer() {
-      return isStaff() && (
-        isAdmin() || 
-        getStaffRole() == 'purchaser' || 
-        getStaffRole() == 'buyer'
+      return isAuthenticated() && (
+        isAdmin() || (
+          isStaff() && (
+            getStaffRole() == 'purchaser' || 
+            getStaffRole() == 'buyer'
+          )
+        )
       );
     }
 
     // 3. 財務會計 (Finance)：負責付款核銷、退款審核與收款帳戶設定
     function isFinance() {
-      return isStaff() && (
-        isAdmin() || 
-        getStaffRole() == 'finance'
+      return isAuthenticated() && (
+        isAdmin() || (
+          isStaff() && (
+            getStaffRole() == 'finance'
+          )
+        )
       );
     }
 
     // 4. 小幫手/客服 (Assistant / Customer Service)：負責包裹出貨追蹤、顧客收件聯絡
     function isAssistant() {
-      return isStaff() && (
-        isAdmin() || 
-        getStaffRole() == 'customer_service'
+      return isAuthenticated() && (
+        isAdmin() || (
+          isStaff() && (
+            getStaffRole() == 'customer_service'
+          )
+        )
       );
     }
 

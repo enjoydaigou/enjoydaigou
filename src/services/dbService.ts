@@ -373,37 +373,57 @@ export async function executeSafeCloudMigration(localData: {
   staffUsers: StaffUser[];
 }): Promise<{ success: boolean; migrated: MigrationCounts; error?: string }> {
   try {
-    // 1. Save Settings
+    if (!auth.currentUser) {
+      throw new Error('尚未偵測到 Firebase 登入狀態！請先使用管理員帳號密碼登入後再執行遷移。');
+    }
+
+    // 1. Ensure the logged-in Super Admin user document is bootstrapped in staff_users
+    const currentAdminDoc: StaffUser = {
+      id: auth.currentUser.uid,
+      username: auth.currentUser.email?.split('@')[0] || 'admin',
+      name: '最高管理員 (主理人)',
+      role: 'super_admin',
+      password: '',
+      email: auth.currentUser.email || undefined,
+      status: 'active',
+      createdAt: new Date().toISOString(),
+      lastLoginAt: new Date().toISOString(),
+    };
+    await saveCloudStaffUser(currentAdminDoc);
+
+    // 2. Save Settings
     await saveCloudSettings(localData.settings);
 
-    // 2. Save Catalog
+    // 3. Save Catalog
     for (const prod of localData.catalog) {
       await saveCloudProduct(prod);
     }
 
-    // 3. Save Orders
+    // 4. Save Orders
     for (const ord of localData.orders) {
       await saveCloudOrder(ord);
     }
 
-    // 4. Save Payments
+    // 5. Save Payments
     for (const pay of localData.payments) {
       await saveCloudPayment(pay);
     }
 
-    // 5. Save Customers (Passwords automatically stripped!)
+    // 6. Save Customers (Passwords automatically stripped!)
     for (const cust of localData.customers) {
       await saveCloudCustomer(cust);
     }
 
-    // 6. Save Wishes
+    // 7. Save Wishes
     for (const wish of localData.wishes) {
       await saveCloudWish(wish);
     }
 
-    // 7. Save Staff Users
+    // 8. Save Staff Users
     for (const staff of localData.staffUsers) {
-      await saveCloudStaffUser(staff);
+      if (staff.id !== auth.currentUser.uid) {
+        await saveCloudStaffUser(staff);
+      }
     }
 
     return {
@@ -415,11 +435,14 @@ export async function executeSafeCloudMigration(localData: {
         paymentsCount: localData.payments.length,
         customersCount: localData.customers.length,
         wishesCount: localData.wishes.length,
-        staffUsersCount: localData.staffUsers.length,
+        staffUsersCount: localData.staffUsers.length + 1,
       },
     };
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
+    let msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes('permission-denied') || msg.includes('Missing or insufficient permissions')) {
+      msg = '權限不足 (Firebase 權限檢查拒絕)：請確認已使用管理員帳號登入，且雲端安全規則已同步部署。';
+    }
     return {
       success: false,
       migrated: {
