@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Customer, Order, OrderItem, Currency, PaymentRecord, PaymentStage, SystemSettings, CatalogProduct, OrderStatus, StaffUser, WishRequest } from './types';
 import {
   getStoredSettings,
@@ -16,6 +16,7 @@ import {
   saveStoredCurrentAdmin,
   getStoredWishRequests,
   saveStoredWishRequests,
+  exportBackupJSON,
 } from './utils/storage';
 import { Sidebar, NavTab } from './components/layout/Sidebar';
 import { Header } from './components/layout/Header';
@@ -57,6 +58,21 @@ export default function App() {
   const [reconcileFilterOrderNo, setReconcileFilterOrderNo] = useState<string>('');
   const [preselectedProduct, setPreselectedProduct] = useState<CatalogProduct | null>(null);
   const [preselectedItems, setPreselectedItems] = useState<OrderItem[] | null>(null);
+  const [storageError, setStorageError] = useState<{ message: string; isQuota: boolean; timestamp?: string } | null>(null);
+
+  // Listen for local storage write failures (e.g. QuotaExceededError)
+  useEffect(() => {
+    const handleStorageErr = (e: Event) => {
+      const customEvent = e as CustomEvent<{ message: string; isQuota: boolean; timestamp?: string }>;
+      if (customEvent.detail) {
+        setStorageError(customEvent.detail);
+      }
+    };
+    window.addEventListener('globalproxy_storage_error', handleStorageErr);
+    return () => {
+      window.removeEventListener('globalproxy_storage_error', handleStorageErr);
+    };
+  }, []);
 
   // Reload data from storage
   const reloadAllData = () => {
@@ -448,40 +464,92 @@ export default function App() {
     saveStoredCurrentAdmin(null);
   };
 
+  // Emergency Local Storage Error Notification Banner
+  const storageAlertBanner = storageError ? (
+    <div className="fixed top-0 left-0 right-0 z-[9999] bg-rose-700 text-white px-4 py-2.5 text-xs shadow-2xl flex flex-wrap items-center justify-between gap-3 border-b-2 border-rose-950 animate-slide-down">
+      <div className="flex items-center gap-2">
+        <span className="text-base animate-bounce">🚨</span>
+        <div>
+          <span className="font-bold text-rose-100 uppercase">【本機儲存異常警告】</span>
+          <span className="text-white font-medium">{storageError.message}</span>
+        </div>
+      </div>
+      <div className="flex items-center gap-2 shrink-0 ml-auto">
+        <button
+          onClick={() => {
+            const json = exportBackupJSON({
+              settings,
+              customers,
+              orders,
+              payments,
+              catalog,
+              staffUsers,
+              wishRequests,
+            });
+            const blob = new Blob([json], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `emergency_backup_${new Date().toISOString().slice(0, 10)}.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+          }}
+          className="bg-white text-rose-800 font-bold px-3 py-1 rounded shadow-xs hover:bg-rose-50 transition cursor-pointer"
+        >
+          立即下載 JSON 備份
+        </button>
+        <button
+          onClick={() => setStorageError(null)}
+          className="bg-rose-900/80 hover:bg-rose-900 text-rose-200 px-2 py-1 rounded cursor-pointer"
+        >
+          關閉提示
+        </button>
+      </div>
+    </div>
+  ) : null;
+
   // If currently in Storefront mode, render StorefrontView
   if (viewMode === 'storefront') {
     return (
-      <StorefrontView
-        catalog={catalog}
-        settings={settings}
-        orders={orders}
-        customers={customers}
-        currentAdmin={currentAdmin}
-        wishRequests={wishRequests}
-        onPlaceOrder={handleStorefrontPlaceOrder}
-        onSaveCustomer={handleSaveCustomer}
-        onSwitchToAdmin={() => setViewMode('admin')}
-        onReportTransferLast5={handleReportTransferLast5}
-        onUpdateOrder={handleUpdateOrder}
-        onSaveWish={handleSaveWish}
-      />
+      <>
+        {storageAlertBanner}
+        <StorefrontView
+          catalog={catalog}
+          settings={settings}
+          orders={orders}
+          customers={customers}
+          currentAdmin={currentAdmin}
+          wishRequests={wishRequests}
+          onPlaceOrder={handleStorefrontPlaceOrder}
+          onSaveCustomer={handleSaveCustomer}
+          onSwitchToAdmin={() => setViewMode('admin')}
+          onReportTransferLast5={handleReportTransferLast5}
+          onUpdateOrder={handleUpdateOrder}
+          onSaveWish={handleSaveWish}
+        />
+      </>
     );
   }
 
   // Admin access gate: require login if no active admin session
   if (!currentAdmin) {
     return (
-      <AdminLoginView
-        settings={settings}
-        staffUsers={staffUsers}
-        onLoginSuccess={handleAdminLogin}
-        onReturnToStorefront={() => setViewMode('storefront')}
-      />
+      <>
+        {storageAlertBanner}
+        <AdminLoginView
+          settings={settings}
+          staffUsers={staffUsers}
+          onLoginSuccess={handleAdminLogin}
+          onReturnToStorefront={() => setViewMode('storefront')}
+        />
+      </>
     );
   }
 
   return (
-    <div className="flex h-screen bg-slate-100 overflow-hidden text-slate-900 font-sans antialiased relative">
+    <>
+      {storageAlertBanner}
+      <div className="flex h-screen bg-slate-100 overflow-hidden text-slate-900 font-sans antialiased relative">
       {/* Left Navigation Sidebar */}
       <Sidebar
         activeTab={activeTab}
@@ -674,5 +742,6 @@ export default function App() {
         </button>
       </div>
     </div>
+    </>
   );
 }

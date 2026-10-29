@@ -1108,12 +1108,79 @@ export function getStoredSettings(): SystemSettings {
   }
 }
 
-export function saveStoredSettings(settings: SystemSettings): void {
+export interface StorageSaveResult {
+  success: boolean;
+  error?: string;
+  isQuotaExceeded?: boolean;
+}
+
+export function safeLocalStorageSetItem(key: string, value: string): StorageSaveResult {
   try {
-    localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(settings));
-  } catch (err) {
-    console.error('Failed to save settings to localStorage', err);
+    localStorage.setItem(key, value);
+    return { success: true };
+  } catch (err: unknown) {
+    const errorObj = err as any;
+    const isQuota = !!(
+      errorObj && (
+        errorObj.name === 'QuotaExceededError' ||
+        errorObj.name === 'NS_ERROR_DOM_QUOTA_REACHED' ||
+        errorObj.code === 22 ||
+        errorObj.code === 1014
+      )
+    );
+    const errorMessage = isQuota
+      ? '本機儲存空間（約 5MB）已滿！新資料（尤其多張高畫質圖片）無法寫入本機，重新整理網頁將會遺失！請先匯出 JSON 備份或清理商品圖片。'
+      : `本機儲存寫入失敗：${errorObj?.message || '未知錯誤'}`;
+
+    console.error(`[GlobalProxy Storage Error] Failed to write key "${key}":`, err);
+
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent('globalproxy_storage_error', {
+          detail: {
+            key,
+            message: errorMessage,
+            isQuota,
+            timestamp: new Date().toISOString(),
+          },
+        })
+      );
+    }
+
+    return {
+      success: false,
+      error: errorMessage,
+      isQuotaExceeded: isQuota,
+    };
   }
+}
+
+export function getLocalStorageUsage(): { usedBytes: number; usedKb: number; usedMb: number; percentEstimate: number } {
+  try {
+    let totalLength = 0;
+    if (typeof localStorage !== 'undefined') {
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key) {
+          const val = localStorage.getItem(key) || '';
+          totalLength += key.length + val.length;
+        }
+      }
+    }
+    // utf-16 chars ~ 2 bytes
+    const usedBytes = totalLength * 2;
+    const usedKb = Math.round((usedBytes / 1024) * 10) / 10;
+    const usedMb = Math.round((usedBytes / (1024 * 1024)) * 100) / 100;
+    const percentEstimate = Math.min(100, Math.round((usedBytes / (5 * 1024 * 1024)) * 100));
+    return { usedBytes, usedKb, usedMb, percentEstimate };
+  } catch {
+    return { usedBytes: 0, usedKb: 0, usedMb: 0, percentEstimate: 0 };
+  }
+}
+
+export function saveStoredSettings(settings: SystemSettings): boolean {
+  const res = safeLocalStorageSetItem(STORAGE_KEYS.SETTINGS, JSON.stringify(settings));
+  return res.success;
 }
 
 export function getStoredStaffUsers(): StaffUser[] {
@@ -1127,12 +1194,9 @@ export function getStoredStaffUsers(): StaffUser[] {
   }
 }
 
-export function saveStoredStaffUsers(staffList: StaffUser[]): void {
-  try {
-    localStorage.setItem(STORAGE_KEYS.STAFF_USERS, JSON.stringify(staffList));
-  } catch (err) {
-    console.error('Failed to save staff users to localStorage', err);
-  }
+export function saveStoredStaffUsers(staffList: StaffUser[]): boolean {
+  const res = safeLocalStorageSetItem(STORAGE_KEYS.STAFF_USERS, JSON.stringify(staffList));
+  return res.success;
 }
 
 export function getStoredCurrentAdmin(): StaffUser | null {
@@ -1145,15 +1209,17 @@ export function getStoredCurrentAdmin(): StaffUser | null {
   }
 }
 
-export function saveStoredCurrentAdmin(admin: StaffUser | null): void {
-  try {
-    if (admin) {
-      localStorage.setItem(STORAGE_KEYS.CURRENT_ADMIN, JSON.stringify(admin));
-    } else {
+export function saveStoredCurrentAdmin(admin: StaffUser | null): boolean {
+  if (admin) {
+    const res = safeLocalStorageSetItem(STORAGE_KEYS.CURRENT_ADMIN, JSON.stringify(admin));
+    return res.success;
+  } else {
+    try {
       localStorage.removeItem(STORAGE_KEYS.CURRENT_ADMIN);
+      return true;
+    } catch {
+      return false;
     }
-  } catch (err) {
-    console.error('Failed to save current admin to localStorage', err);
   }
 }
 
@@ -1172,12 +1238,9 @@ export function getStoredCustomers(): Customer[] {
   }
 }
 
-export function saveStoredCustomers(customers: Customer[]): void {
-  try {
-    localStorage.setItem(STORAGE_KEYS.CUSTOMERS, JSON.stringify(customers));
-  } catch (err) {
-    console.error('Failed to save customers to localStorage', err);
-  }
+export function saveStoredCustomers(customers: Customer[]): boolean {
+  const res = safeLocalStorageSetItem(STORAGE_KEYS.CUSTOMERS, JSON.stringify(customers));
+  return res.success;
 }
 
 export function getStoredOrders(): Order[] {
@@ -1190,12 +1253,9 @@ export function getStoredOrders(): Order[] {
   }
 }
 
-export function saveStoredOrders(orders: Order[]): void {
-  try {
-    localStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify(orders));
-  } catch (err) {
-    console.error('Failed to save orders to localStorage', err);
-  }
+export function saveStoredOrders(orders: Order[]): boolean {
+  const res = safeLocalStorageSetItem(STORAGE_KEYS.ORDERS, JSON.stringify(orders));
+  return res.success;
 }
 
 export function getStoredPayments(): PaymentRecord[] {
@@ -1208,12 +1268,9 @@ export function getStoredPayments(): PaymentRecord[] {
   }
 }
 
-export function saveStoredPayments(payments: PaymentRecord[]): void {
-  try {
-    localStorage.setItem(STORAGE_KEYS.PAYMENTS, JSON.stringify(payments));
-  } catch (err) {
-    console.error('Failed to save payments to localStorage', err);
-  }
+export function saveStoredPayments(payments: PaymentRecord[]): boolean {
+  const res = safeLocalStorageSetItem(STORAGE_KEYS.PAYMENTS, JSON.stringify(payments));
+  return res.success;
 }
 
 export function getStoredCatalog(): CatalogProduct[] {
@@ -1285,12 +1342,9 @@ export function getStoredCatalog(): CatalogProduct[] {
   }
 }
 
-export function saveStoredCatalog(catalog: CatalogProduct[]): void {
-  try {
-    localStorage.setItem(STORAGE_KEYS.CATALOG, JSON.stringify(catalog));
-  } catch (err) {
-    console.error('Failed to save catalog to localStorage', err);
-  }
+export function saveStoredCatalog(catalog: CatalogProduct[]): boolean {
+  const res = safeLocalStorageSetItem(STORAGE_KEYS.CATALOG, JSON.stringify(catalog));
+  return res.success;
 }
 
 export function getStoredWishRequests(): WishRequest[] {
@@ -1304,25 +1358,32 @@ export function getStoredWishRequests(): WishRequest[] {
   }
 }
 
-export function saveStoredWishRequests(wishes: WishRequest[]): void {
-  try {
-    localStorage.setItem(STORAGE_KEYS.WISHES, JSON.stringify(wishes));
-  } catch (err) {
-    console.error('Failed to save wish requests to localStorage', err);
-  }
+export function saveStoredWishRequests(wishes: WishRequest[]): boolean {
+  const res = safeLocalStorageSetItem(STORAGE_KEYS.WISHES, JSON.stringify(wishes));
+  return res.success;
 }
 
-export function exportBackupJSON(): string {
+export interface BackupDataPayload {
+  settings?: SystemSettings;
+  customers?: Customer[];
+  orders?: Order[];
+  payments?: PaymentRecord[];
+  catalog?: CatalogProduct[];
+  staffUsers?: StaffUser[];
+  wishRequests?: WishRequest[];
+}
+
+export function exportBackupJSON(inMemoryData?: BackupDataPayload): string {
   const data = {
     exportDate: new Date().toISOString(),
     version: '1.0',
-    settings: getStoredSettings(),
-    customers: getStoredCustomers(),
-    orders: getStoredOrders(),
-    payments: getStoredPayments(),
-    catalog: getStoredCatalog(),
-    staffUsers: getStoredStaffUsers(),
-    wishRequests: getStoredWishRequests(),
+    settings: inMemoryData?.settings ?? getStoredSettings(),
+    customers: inMemoryData?.customers ?? getStoredCustomers(),
+    orders: inMemoryData?.orders ?? getStoredOrders(),
+    payments: inMemoryData?.payments ?? getStoredPayments(),
+    catalog: inMemoryData?.catalog ?? getStoredCatalog(),
+    staffUsers: inMemoryData?.staffUsers ?? getStoredStaffUsers(),
+    wishRequests: inMemoryData?.wishRequests ?? getStoredWishRequests(),
   };
   return JSON.stringify(data, null, 2);
 }

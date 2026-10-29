@@ -44,6 +44,7 @@ import {
   getStoredPayments,
   getStoredCustomers,
   getStoredWishRequests,
+  getLocalStorageUsage,
 } from '../../utils/storage';
 import { exportComprehensiveWorkbookToExcel } from '../../utils/excelExport';
 import { executeSafeCloudMigration } from '../../services/dbService';
@@ -1383,6 +1384,34 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         <p className="text-xs text-slate-500 leading-relaxed">
           您可以隨時將所有代購委託單、海外採購明細、收款對帳清單、人員帳號與客戶資料匯出為標準 Excel 檔案 (.xlsx) 或 JSON 完整資料備份檔。
         </p>
+
+        {/* Local Storage Capacity Monitor */}
+        {(() => {
+          const usage = getLocalStorageUsage();
+          const isWarning = usage.percentEstimate >= 80;
+          return (
+            <div className={`p-3 rounded-lg border text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 ${
+              isWarning ? 'bg-amber-50 border-amber-300 text-amber-900' : 'bg-slate-50 border-slate-200 text-slate-700'
+            }`}>
+              <div className="flex items-center gap-2">
+                <span className="text-base">{isWarning ? '⚠️' : '💾'}</span>
+                <div>
+                  <span className="font-bold">本機瀏覽器儲存容量 (Local Storage)：</span>
+                  <span>已使用約 <strong>{usage.usedMb} MB</strong> / 預估上限 5.0 MB ({usage.percentEstimate}%)</span>
+                  {isWarning && (
+                    <span className="ml-2 text-rose-600 font-bold">接近上限！請勿直接貼入超大解析度圖片，建議定期匯出備份。</span>
+                  )}
+                </div>
+              </div>
+              <div className="w-full sm:w-32 bg-slate-200 rounded-full h-2 overflow-hidden shrink-0">
+                <div
+                  className={`h-full rounded-full ${isWarning ? 'bg-amber-500' : 'bg-blue-600'}`}
+                  style={{ width: `${Math.min(100, usage.percentEstimate)}%` }}
+                />
+              </div>
+            </div>
+          );
+        })()}
         <div className="flex flex-wrap items-center gap-3">
           <button
             onClick={() => exportComprehensiveWorkbookToExcel()}
