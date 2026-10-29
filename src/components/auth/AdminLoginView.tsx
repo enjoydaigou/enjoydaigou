@@ -8,9 +8,11 @@ import {
   LogIn,
   ArrowLeft,
   Sparkles,
-  Store,
   AlertCircle,
+  Loader2,
 } from 'lucide-react';
+import { signInWithEmailAndPassword, signOut } from 'firebase/auth';
+import { auth, SUPER_ADMIN_UID } from '../../services/firebase';
 import { StaffUser, SystemSettings } from '../../types';
 
 interface AdminLoginViewProps {
@@ -30,46 +32,103 @@ export const AdminLoginView: React.FC<AdminLoginViewProps> = ({
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
 
-    const cleanUsername = username.trim().toLowerCase();
+    const cleanInput = username.trim();
     const cleanPassword = password.trim();
 
-    if (!cleanUsername || !cleanPassword) {
+    if (!cleanInput || !cleanPassword) {
       setErrorMsg('請輸入管理員帳號與登入密碼！');
       return;
     }
 
-    const matched = staffUsers.find(
-      (u) =>
-        u.username.toLowerCase() === cleanUsername ||
-        (u.email && u.email.toLowerCase() === cleanUsername)
-    );
-
-    if (!matched) {
-      setErrorMsg('查無此管理員帳號，請確認輸入是否正確。');
-      return;
+    // Determine email to authenticate with Firebase Auth
+    let emailToUse = cleanInput;
+    if (!cleanInput.includes('@')) {
+      const matchedStaff = staffUsers.find(
+        (u) => u.username.toLowerCase() === cleanInput.toLowerCase()
+      );
+      if (matchedStaff?.email && matchedStaff.email.includes('@')) {
+        emailToUse = matchedStaff.email;
+      } else {
+        emailToUse = `${cleanInput.toLowerCase()}@globalproxy.tw`;
+      }
     }
 
-    if (matched.status === 'disabled') {
-      setErrorMsg('此使用人員帳號已被停用，請聯絡主理人或系統超級管理員。');
-      return;
-    }
+    setIsLoggingIn(true);
+    try {
+      const userCredential = await signInWithEmailAndPassword(auth, emailToUse, cleanPassword);
+      const firebaseUser = userCredential.user;
 
-    if (matched.password !== cleanPassword) {
-      setErrorMsg('登入密碼錯誤，請重新確認！(預設密碼請參考下方快捷按鈕)');
-      return;
-    }
+      // 1. Authorized Super Admin UID verification
+      if (firebaseUser.uid === SUPER_ADMIN_UID) {
+        const superAdminUser: StaffUser = {
+          id: firebaseUser.uid,
+          username: firebaseUser.email?.split('@')[0] || 'admin',
+          name: '最高管理員 (主理人)',
+          role: 'super_admin',
+          password: '', // Never expose or retain plaintext password
+          email: firebaseUser.email || undefined,
+          status: 'active',
+          createdAt: firebaseUser.metadata.creationTime || new Date().toISOString(),
+          lastLoginAt: new Date().toISOString(),
+        };
+        onLoginSuccess(superAdminUser);
+        return;
+      }
 
-    // Success! Update last login
-    const updatedUser: StaffUser = {
-      ...matched,
-      lastLoginAt: new Date().toISOString(),
-    };
-    onLoginSuccess(updatedUser);
+      // 2. Authorized staff verification from staff list
+      const matched = staffUsers.find(
+        (u) =>
+          u.id === firebaseUser.uid ||
+          (firebaseUser.email && u.email?.toLowerCase() === firebaseUser.email.toLowerCase())
+      );
+
+      if (matched) {
+        if (matched.status === 'disabled') {
+          await signOut(auth);
+          setErrorMsg('此管理員帳號已被停用，請聯絡主理人。');
+          return;
+        }
+
+        const authenticatedStaff: StaffUser = {
+          ...matched,
+          id: firebaseUser.uid,
+          password: '',
+          lastLoginAt: new Date().toISOString(),
+        };
+        onLoginSuccess(authenticatedStaff);
+        return;
+      }
+
+      // 3. User authenticated in Firebase, but not on the authorized staff list
+      await signOut(auth);
+      setErrorMsg('此 Firebase 帳號未獲得代購管理後台授權，無法進入。');
+    } catch (err: unknown) {
+      const errorCode = (err as { code?: string })?.code;
+      if (
+        errorCode === 'auth/invalid-credential' ||
+        errorCode === 'auth/user-not-found' ||
+        errorCode === 'auth/wrong-password' ||
+        errorCode === 'auth/invalid-email'
+      ) {
+        setErrorMsg('帳號或登入密碼不正確，請重新確認！');
+      } else if (errorCode === 'auth/user-disabled') {
+        setErrorMsg('此帳號已被停用，請聯絡系統主理人。');
+      } else if (errorCode === 'auth/too-many-requests') {
+        setErrorMsg('登入失敗次數過多，為維護帳號安全，系統已暫時鎖定，請稍後再試。');
+      } else if (errorCode === 'auth/network-request-failed') {
+        setErrorMsg('網路連線失敗，請檢查網路連線狀態後再試。');
+      } else {
+        setErrorMsg(`登入驗證失敗 (${errorCode || '未知錯誤'})，請稍後再試。`);
+      }
+    } finally {
+      setIsLoggingIn(false);
+    }
   };
 
   const handleQuickFill = (demoUsername: string, demoPass: string) => {
@@ -106,7 +165,7 @@ export const AdminLoginView: React.FC<AdminLoginViewProps> = ({
           <div className="grid grid-cols-3 gap-1.5 pb-2">
             <button
               type="button"
-              onClick={() => handleQuickFill('admin', 'admin123')}
+              onClick={() => handleQuickFill('admin@globalproxy.tw', 'admin123')}
               className="px-2 py-1.5 bg-white hover:bg-blue-100 text-blue-900 border border-blue-200 rounded-lg text-center font-bold text-[11px] transition-colors cursor-pointer shadow-2xs"
             >
               <div>👑 總管理員</div>
@@ -114,7 +173,7 @@ export const AdminLoginView: React.FC<AdminLoginViewProps> = ({
             </button>
             <button
               type="button"
-              onClick={() => handleQuickFill('wendy', 'password123')}
+              onClick={() => handleQuickFill('wendy@globalproxy.tw', 'password123')}
               className="px-2 py-1.5 bg-white hover:bg-blue-100 text-blue-900 border border-blue-200 rounded-lg text-center font-bold text-[11px] transition-colors cursor-pointer shadow-2xs"
             >
               <div>🛍️ 小幫手 Wendy</div>
@@ -122,30 +181,34 @@ export const AdminLoginView: React.FC<AdminLoginViewProps> = ({
             </button>
             <button
               type="button"
-              onClick={() => handleQuickFill('finance_alice', 'password123')}
+              onClick={() => handleQuickFill('finance@globalproxy.tw', 'password123')}
               className="px-2 py-1.5 bg-white hover:bg-blue-100 text-blue-900 border border-blue-200 rounded-lg text-center font-bold text-[11px] transition-colors cursor-pointer shadow-2xs"
             >
               <div>💰 會計 Alice</div>
               <div className="text-[9px] text-slate-400 font-mono font-normal">finance</div>
             </button>
           </div>
+          <p className="text-[10px] text-slate-500 pb-1">
+            * 系統已接入 Firebase Authentication。若已於 Firebase Console 建立管理員，請直接輸入設定的 Email 與密碼。
+          </p>
         </div>
 
         {/* Login Form */}
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
           <div>
             <label className="block text-xs font-bold text-slate-800 mb-1.5">
-              後台登入帳號 / Email *
+              後台管理員 Email / 帳號 *
             </label>
             <div className="relative">
               <User className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
               <input
                 type="text"
                 required
+                disabled={isLoggingIn}
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                placeholder="請輸入帳號 (例：admin 或 wendy)"
-                className="w-full pl-9 pr-3 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
+                placeholder="請輸入帳號或 Email (例：admin@globalproxy.tw)"
+                className="w-full pl-9 pr-3 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono disabled:opacity-60"
               />
             </div>
           </div>
@@ -159,10 +222,11 @@ export const AdminLoginView: React.FC<AdminLoginViewProps> = ({
               <input
                 type={showPassword ? 'text' : 'password'}
                 required
+                disabled={isLoggingIn}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="請輸入密碼"
-                className="w-full pl-9 pr-10 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
+                className="w-full pl-9 pr-10 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono disabled:opacity-60"
               />
               <button
                 type="button"
@@ -184,10 +248,20 @@ export const AdminLoginView: React.FC<AdminLoginViewProps> = ({
 
           <button
             type="submit"
-            className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl shadow-md transition-colors flex items-center justify-center gap-2 cursor-pointer mt-2"
+            disabled={isLoggingIn}
+            className="w-full py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white font-bold text-xs rounded-xl shadow-md transition-colors flex items-center justify-center gap-2 cursor-pointer disabled:cursor-not-allowed mt-2"
           >
-            <LogIn className="w-4 h-4" />
-            <span>登入代購營運工作台</span>
+            {isLoggingIn ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span>正在透過 Firebase 驗證身分...</span>
+              </>
+            ) : (
+              <>
+                <LogIn className="w-4 h-4" />
+                <span>登入代購營運工作台</span>
+              </>
+            )}
           </button>
 
           <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">

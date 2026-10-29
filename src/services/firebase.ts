@@ -3,6 +3,9 @@ import { getAuth } from 'firebase/auth';
 import { getFirestore, doc, getDocFromServer } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 
+// Designated Super Admin Firebase Authentication UID
+export const SUPER_ADMIN_UID = 'X7Cq5CSZTWQkTn9LtUj6U6YPUpi2';
+
 // Initialize Firebase App singleton
 export const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
 

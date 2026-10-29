@@ -32,6 +32,8 @@ import { SettingsView } from './components/views/SettingsView';
 import { StorefrontView } from './components/storefront/StorefrontView';
 import { AdminLoginView } from './components/auth/AdminLoginView';
 import { LayoutDashboard, ShoppingBag, Boxes, CreditCard, Menu } from 'lucide-react';
+import { onAuthStateChanged, signOut } from 'firebase/auth';
+import { auth, SUPER_ADMIN_UID } from './services/firebase';
 
 export default function App() {
   const [viewMode, setViewMode] = useState<'admin' | 'storefront'>(() => {
@@ -52,7 +54,8 @@ export default function App() {
   const [catalog, setCatalog] = useState<CatalogProduct[]>(getStoredCatalog());
   const [wishRequests, setWishRequests] = useState<WishRequest[]>(getStoredWishRequests());
   const [staffUsers, setStaffUsers] = useState<StaffUser[]>(getStoredStaffUsers());
-  const [currentAdmin, setCurrentAdmin] = useState<StaffUser | null>(getStoredCurrentAdmin());
+  const [currentAdmin, setCurrentAdmin] = useState<StaffUser | null>(null);
+  const [isAuthChecking, setIsAuthChecking] = useState<boolean>(true);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [reconcileFilterOrderNo, setReconcileFilterOrderNo] = useState<string>('');
@@ -74,6 +77,62 @@ export default function App() {
     };
   }, []);
 
+  // Real-time Firebase Authentication listener ensuring Zero-Trust Admin verification
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (firebaseUser) {
+        // 1. Authorized Super Admin UID match
+        if (firebaseUser.uid === SUPER_ADMIN_UID) {
+          const verifiedAdmin: StaffUser = {
+            id: firebaseUser.uid,
+            username: firebaseUser.email?.split('@')[0] || 'admin',
+            name: '最高管理員 (主理人)',
+            role: 'super_admin',
+            password: '',
+            email: firebaseUser.email || undefined,
+            status: 'active',
+            createdAt: firebaseUser.metadata.creationTime || new Date().toISOString(),
+            lastLoginAt: new Date().toISOString(),
+          };
+          setCurrentAdmin(verifiedAdmin);
+          saveStoredCurrentAdmin(verifiedAdmin);
+        } else {
+          // 2. Check staff list for authorized staff
+          const currentStaff = getStoredStaffUsers();
+          const matched = currentStaff.find(
+            (s) =>
+              s.id === firebaseUser.uid ||
+              (firebaseUser.email && s.email?.toLowerCase() === firebaseUser.email.toLowerCase())
+          );
+
+          if (matched && matched.status === 'active') {
+            const verifiedStaff: StaffUser = {
+              ...matched,
+              id: firebaseUser.uid,
+              password: '',
+              lastLoginAt: new Date().toISOString(),
+            };
+            setCurrentAdmin(verifiedStaff);
+            saveStoredCurrentAdmin(verifiedStaff);
+          } else {
+            // Unauthorized Firebase user session
+            console.warn('Unauthorized Firebase Auth user session detected, signing out:', firebaseUser.uid);
+            await signOut(auth);
+            setCurrentAdmin(null);
+            saveStoredCurrentAdmin(null);
+          }
+        }
+      } else {
+        // No Firebase Auth session -> strictly clear admin session
+        setCurrentAdmin(null);
+        saveStoredCurrentAdmin(null);
+      }
+      setIsAuthChecking(false);
+    });
+
+    return () => unsubscribe();
+  }, []);
+
   // Reload data from storage
   const reloadAllData = () => {
     setSettings(getStoredSettings());
@@ -83,7 +142,6 @@ export default function App() {
     setCatalog(getStoredCatalog());
     setWishRequests(getStoredWishRequests());
     setStaffUsers(getStoredStaffUsers());
-    setCurrentAdmin(getStoredCurrentAdmin());
   };
 
   // Badge counts
@@ -459,7 +517,12 @@ export default function App() {
     saveStoredCurrentAdmin(user);
   };
 
-  const handleAdminLogout = () => {
+  const handleAdminLogout = async () => {
+    try {
+      await signOut(auth);
+    } catch (err) {
+      console.warn('Firebase signOut error:', err);
+    }
     setCurrentAdmin(null);
     saveStoredCurrentAdmin(null);
   };
@@ -528,6 +591,20 @@ export default function App() {
           onSaveWish={handleSaveWish}
         />
       </>
+    );
+  }
+
+  // Admin access gate: check Firebase Auth state
+  if (isAuthChecking) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-4">
+        <div className="flex flex-col items-center gap-3 text-white">
+          <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+          <p className="text-xs text-slate-400 font-mono tracking-wide">
+            正在安全驗證 Firebase 管理員身分...
+          </p>
+        </div>
+      </div>
     );
   }
 
